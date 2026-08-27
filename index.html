@@ -607,6 +607,7 @@ function boardTabHTML(){
     <div class="section-label">Date</div>
     <div class="date-row"><input type="date" id="boardDateInput" value="${state.boardDate}"></div>
     <div class="export-row">
+      <button class="export-btn" id="whatsappBtn">💬 WhatsApp Message Bhejein</button>
       <button class="export-btn" id="exportDayBtn">📥 Is Date Ka Excel Download</button>
       <button class="export-btn" id="exportAllBtn">📥 Sab Dates Ka Excel Download</button>
     </div>
@@ -637,33 +638,69 @@ function escapeHtml(s){
 }
 
 /* ---------- Excel (CSV) Export ---------- */
-const CSV_HEADERS = ['Date','Machine','Job','Qty','Status','Operator','Shift','Last Update'];
+const CSV_HEADERS = ['Task ID','Machine Name','Job Description','Operator','Status','WhatsApp'];
 function csvEscape(v){
   const s = (v===undefined||v===null) ? '' : String(v);
   if(/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
   return s;
 }
-function planToRows(plan){
-  const rows = [];
+function formatDateDDMMYYYY(dateStr){
+  const parts = (dateStr||'').split('-');
+  if(parts.length!==3) return dateStr;
+  const [y,m,d] = parts;
+  return `${d}-${m}-${y}`;
+}
+function buildWhatsAppMessage(plan){
+  const lines = [`📋 *DAILY PLANNING - ${formatDateDDMMYYYY(plan.date)}*`, '-------------------------'];
+  let any = false;
   MACHINES.forEach(m => {
     const jobs = (plan.machines && plan.machines[m]) || [];
     jobs.forEach(j => {
-      const updates = j.updates || [];
-      if(updates.length === 0){
-        rows.push([plan.date, m, j.job || '', j.qty ?? '', statusLabel('pending'), '', '', '']);
-      } else {
-        updates.forEach(u => {
-          rows.push([plan.date, m, j.job || '', j.qty ?? '', statusLabel(u.action), u.operator || '', u.shift || '', u.ts || '']);
-        });
-      }
+      any = true;
+      const opName = j.operator || (j.updates && j.updates.length ? j.updates[j.updates.length-1].operator : '');
+      const opText = opName ? `*${opName}*` : '_(unassigned)_';
+      lines.push(`• *${m}* | ${j.job || '(no name)'} | 👤 ${opText}`);
     });
   });
+  if(!any) lines.push('_Koi job planned nahi hai_');
+  return lines.join('\n');
+}
+function planToRows(plan){
+  const rows = [];
+  let taskNum = 0;
+  MACHINES.forEach(m => {
+    const jobs = (plan.machines && plan.machines[m]) || [];
+    jobs.forEach(j => {
+      taskNum++;
+      const opName = j.operator || (j.updates && j.updates.length ? j.updates[j.updates.length-1].operator : '');
+      rows.push([`Task ${taskNum}`, m, j.job || '', opName, statusLabel(j.status), '']);
+    });
+  });
+  if(rows.length > 0){
+    rows[0][5] = buildWhatsAppMessage(plan);
+  }
   return rows;
 }
 function rowsToCSV(rows){
   const lines = [CSV_HEADERS.join(',')];
   rows.forEach(r => lines.push(r.map(csvEscape).join(',')));
   return '\uFEFF' + lines.join('\n'); // BOM so Excel reads Hindi/UTF-8 text correctly
+}
+async function shareOrCopyWhatsApp(text){
+  if(navigator.share){
+    try{
+      await navigator.share({text});
+      return;
+    }catch(e){
+      if(e && e.name==='AbortError') return;
+    }
+  }
+  try{
+    await navigator.clipboard.writeText(text);
+    showToast('Message copy ho gaya ✓ WhatsApp mein paste karein');
+  }catch(e){
+    showToast('Copy fail: ' + (e.message||e));
+  }
 }
 function downloadCSV(filename, csvContent){
   const blob = new Blob([csvContent], {type:'text/csv;charset=utf-8;'});
@@ -749,6 +786,7 @@ function wireAdmin(){
     document.getElementById('boardDateInput').onchange = (e) => {
       state.boardDate = e.target.value; render();
     };
+    document.getElementById('whatsappBtn').onclick = () => shareOrCopyWhatsApp(buildWhatsAppMessage(state.boardPlan));
     document.getElementById('exportDayBtn').onclick = () => exportSingleDay(state.boardDate);
     document.getElementById('exportAllBtn').onclick = () => exportAllDays();
   }
